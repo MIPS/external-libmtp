@@ -130,6 +130,7 @@ static filemap_t *g_filemap = NULL;
 // This holds the global property mapping table
 static propertymap_t *g_propertymap = NULL;
 
+static int load_cache_on_demand = 0;
 /*
  * Forward declarations of local (static) functions.
  */
@@ -2580,6 +2581,18 @@ void LIBMTP_Dump_Errorstack(LIBMTP_mtpdevice_t *device)
   }
 }
 
+void LIBMTP_Set_Device_Timeout(LIBMTP_mtpdevice_t *device, int milliseconds)
+{
+  PTP_USB *ptp_usb = (PTP_USB*) device->usbinfo;
+  set_usb_device_timeout(ptp_usb, milliseconds);
+}
+
+void LIBMTP_Get_Device_Timeout(LIBMTP_mtpdevice_t *device, int *milliseconds)
+{
+  PTP_USB *ptp_usb = (PTP_USB*) device->usbinfo;
+  get_usb_device_timeout(ptp_usb, milliseconds);
+}
+
 /**
  * This command gets all handles and stuff by FAST directory retrieveal
  * which is available by getting all metadata for object
@@ -2791,6 +2804,10 @@ static void flush_handles(LIBMTP_mtpdevice_t *device)
   uint32_t i;
 
   if (!device->cached) {
+    return;
+  }
+
+  if (load_cache_on_demand) {
     return;
   }
 
@@ -4555,6 +4572,10 @@ LIBMTP_file_t * LIBMTP_Get_Files_And_Folders(LIBMTP_mtpdevice_t *device,
   return retfiles;
 }
 
+void LIBMTP_Set_Load_Cache_On_Demand(int flag)
+{
+  load_cache_on_demand = flag;
+}
 
 /**
  * This creates a new track metadata structure and allocates memory

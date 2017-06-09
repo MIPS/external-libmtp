@@ -1,4 +1,7 @@
 LIBMTP_Set_Debug
+LIBMTP_Set_Device_Timeout
+LIBMTP_Get_Device_Timeout
+LIBMTP_Set_Load_Cache_On_Demand
 LIBMTP_Init
 LIBMTP_Get_Supported_Devices_List
 LIBMTP_Detect_Raw_Devices

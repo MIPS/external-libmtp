@@ -58,6 +58,7 @@ typedef unsigned __int64 uint64_t;
 #include <stdint.h>
 /* We use time_t */
 #include <time.h>
+#include <utime.h>
 
 /**
  * @defgroup types libmtp global type definitions
@@ -856,6 +857,9 @@ LIBMTP_error_t *LIBMTP_Get_Errorstack(LIBMTP_mtpdevice_t*);
 void LIBMTP_Clear_Errorstack(LIBMTP_mtpdevice_t*);
 void LIBMTP_Dump_Errorstack(LIBMTP_mtpdevice_t*);
 
+void LIBMTP_Set_Device_Timeout(LIBMTP_mtpdevice_t *device, int milliseconds);
+void LIBMTP_Get_Device_Timeout(LIBMTP_mtpdevice_t *device, int *milliseconds);
+
 #define LIBMTP_STORAGE_SORTBY_NOTSORTED 0
 #define LIBMTP_STORAGE_SORTBY_FREESPACE 1
 #define LIBMTP_STORAGE_SORTBY_MAXSPACE  2
@@ -951,6 +955,8 @@ int LIBMTP_Get_Representative_Sample(LIBMTP_mtpdevice_t *, uint32_t const,
                           LIBMTP_filesampledata_t *);
 int LIBMTP_Get_Thumbnail(LIBMTP_mtpdevice_t *, uint32_t const,
                          unsigned char **data, unsigned int *size);
+
+void LIBMTP_Set_Load_Cache_On_Demand(int flag);
 
 /**
  * @}
