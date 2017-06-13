@@ -4848,7 +4848,6 @@ ptp_object_want (PTPParams *params, uint32_t handle, int want, PTPObject **retob
 			want &= ~PTPOBJECT_MTPPROPLIST_LOADED;
 			goto fallback;
 		}
-
 		/* Microsoft/MTP has fast directory retrieval. */
 		if (!ptp_operation_issupported(params,PTP_OC_MTP_GetObjPropList)) {
 			want &= ~PTPOBJECT_MTPPROPLIST_LOADED;
