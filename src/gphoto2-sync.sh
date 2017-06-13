@@ -1,24 +1,30 @@
 #!/bin/sh
 #set -e
 
-srcdir=`dirname $0`
-
-# Get sources from gphoto2 SVN
-WGET=`which wget`
-if [ "x$WGET" != "x" ]; then
-    wget -O tmpfile http://gphoto.svn.sourceforge.net/viewvc/*checkout*/gphoto/trunk/libgphoto2/camlibs/ptp2/ptp.c
-    mv tmpfile ptp.c.gphoto2
-    wget -O tmpfile http://gphoto.svn.sourceforge.net/viewvc/*checkout*/gphoto/trunk/libgphoto2/camlibs/ptp2/ptp.h
-    mv tmpfile ptp.h.gphoto2
-    wget -O tmpfile http://gphoto.svn.sourceforge.net/viewvc/*checkout*/gphoto/trunk/libgphoto2/camlibs/ptp2/ptp-pack.c
-    mv tmpfile ptp-pack.c.gphoto2
-    wget -O tmpfile http://gphoto.svn.sourceforge.net/viewvc/*checkout*/gphoto/trunk/libgphoto2/camlibs/ptp2/library.c
-    mv tmpfile library.c.gphoto2
-    wget -O tmpfile http://gphoto.svn.sourceforge.net/viewvc/*checkout*/gphoto/trunk/libgphoto2/camlibs/ptp2/music-players.h
-    mv tmpfile music-players.h.gphoto2
-else
-    echo "Could not sync to gphoto2. No WGET."
+SVN=`which svn`
+if [ "x$SVN" = "x" ]; then
+    echo "Install svn! (subversion client)"
+    exit 1
 fi
 
-echo "Finished!"
+if [ ! -d ptp2 ] ; then
+    echo "No copy of the gphoto trunk, checking out..."
+    svn checkout svn://svn.code.sf.net/p/gphoto/code/trunk/libgphoto2/camlibs/ptp2 ptp2
+fi
+if [ ! -d ptp2 ] ; then
+    echo "Could not clone gphoto trunk."
+    exit 1
+fi
 
+cd ptp2
+svn update
+cd ..
+
+cp ptp2/ptp.c ptp.c
+cp ptp2/ptp.h ptp.h
+cp ptp2/ptp-pack.c ptp-pack.c
+cp ptp2/chdk_ptp.h chdk_ptp.h
+cp ptp2/chdk_live_view.h chdk_live_view.h
+diff -ur ptp2/device-flags.h device-flags.h
+
+echo "Finished!"
