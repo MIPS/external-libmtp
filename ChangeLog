@@ -1,8 +1,3 @@
-2009-09-12  Linus Walleij <triad@df.lth.se>
-
-	* configure.ac: bump version to libmtp 1.0.1 and release!
-	* src/Makefile.am: bump soversion to libmtp.so.8.3.1
-
 2009-09-11  Linus Walleij <triad@df.lth.se>
 
 	* src/music-players.h: tag all SONY NWZ walkmen with

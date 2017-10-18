@@ -91,7 +91,6 @@ static filemap_t *filemap = NULL;
 // This holds the global property mapping table
 static propertymap_t *propertymap = NULL;
 
-static int load_cache_on_demand = 0;
 /*
  * Forward declarations of local (static) functions.
  */
@@ -319,7 +318,6 @@ static int register_filetype(char const * const description, LIBMTP_filetype_t c
 
 static void init_filemap()
 {
-  register_filetype("Folder", LIBMTP_FILETYPE_FOLDER, PTP_OFC_Association);
   register_filetype("MediaCard", LIBMTP_FILETYPE_MEDIACARD, PTP_OFC_MTP_MediaCard);
   register_filetype("RIFF WAVE file", LIBMTP_FILETYPE_WAV, PTP_OFC_WAV);
   register_filetype("ISO MPEG-1 Audio Layer 3", LIBMTP_FILETYPE_MP3, PTP_OFC_MP3);
@@ -2111,18 +2109,6 @@ void LIBMTP_Dump_Errorstack(LIBMTP_mtpdevice_t *device)
   }
 }
 
-void LIBMTP_Set_Device_Timeout(LIBMTP_mtpdevice_t *device, int milliseconds)
-{
-  PTP_USB *ptp_usb = (PTP_USB*) device->usbinfo;
-  set_usb_device_timeout(ptp_usb, milliseconds);
-}
-
-void LIBMTP_Get_Device_Timeout(LIBMTP_mtpdevice_t *device, int * milliseconds)
-{
-  PTP_USB *ptp_usb = (PTP_USB*) device->usbinfo;
-  get_usb_device_timeout(ptp_usb, milliseconds);
-}
-
 /**
  * This command gets all handles and stuff by FAST directory retrieveal 
  * which is available by getting all metadata for object 
@@ -2310,224 +2296,6 @@ static void get_handles_recursively(LIBMTP_mtpdevice_t *device,
   free(currentHandles.Handler);
 }
 
-
-LIBMTP_file_t * obj2file(LIBMTP_mtpdevice_t *device, PTPObject *ob)
-{
-  PTP_USB *ptp_usb = (PTP_USB*) device->usbinfo;
-  PTPParams *params = (PTPParams *) device->params;
-  LIBMTP_file_t *file;
-  PTPObject *xob;
-  uint16_t ret;
-
-
-  if (ob->oi.Filename == NULL)
-    ob->oi.Filename = strdup("<null>");
-
-  if (ob->oi.Keywords == NULL)
-    ob->oi.Keywords = strdup("<null>");
-
-  // Allocate a new file type
-  file = LIBMTP_new_file_t();
-
-  file->parent_id = ob->oi.ParentObject;
-  file->storage_id = ob->oi.StorageID;
-
-  // This is some sort of unique ID so we can keep track of the track.
-  file->item_id = ob->oid;
-
-    // Set the filetype
-  file->filetype = map_ptp_type_to_libmtp_type(ob->oi.ObjectFormat);
-
-  // Set the modification date
-  file->modificationdate = ob->oi.ModificationDate;
-
-  // Original file-specific properties
-  // We only have 32-bit file size here; if we find it, we use the
-  // PTP_OPC_ObjectSize property which has 64bit precision.
-  file->filesize = ob->oi.ObjectCompressedSize;
-  if (ob->oi.Filename != NULL) {
-      file->filename = strdup(ob->oi.Filename);
-  }
-
-  /*
-  * A special quirk for devices that doesn't quite
-  * remember that some files marked as "unknown" type are
-  * actually OGG or FLAC files. We look at the filename extension
-  * and see if it happens that this was atleast named "ogg" or "flac"
-  * and fall back on this heuristic approach in that case,
-  * for these bugged devices only.
-  */
-  if (file->filetype == LIBMTP_FILETYPE_UNKNOWN) {
-    if ((FLAG_IRIVER_OGG_ALZHEIMER(ptp_usb) ||
-        FLAG_OGG_IS_UNKNOWN(ptp_usb)) &&
-        has_ogg_extension(file->filename))
-
-      file->filetype = LIBMTP_FILETYPE_OGG;
-
-      if (FLAG_FLAC_IS_UNKNOWN(ptp_usb) && has_flac_extension(file->filename))
-        file->filetype = LIBMTP_FILETYPE_FLAC;
-    }
-
-  /*
-  * If we have a cached, large set of metadata, then use it!
-  */
-  ret = ptp_object_want (params, ob->oid, PTPOBJECT_MTPPROPLIST_LOADED, &xob);
-  if (ob->mtpprops) {
-    MTPProperties *prop = ob->mtpprops;
-    int i;
-
-    for (i=0;i<ob->nrofmtpprops;i++) {
-      // Pick ObjectSize here...
-      if (prop->property == PTP_OPC_ObjectSize) {
-        if (device->object_bitsize == 64) {
-          file->filesize = prop->propval.u64;
-        } else {
-          file->filesize = prop->propval.u32;
-        }
-        break;
-      }
-      prop++;
-    }
-  } else {
-    uint16_t *props = NULL;
-    uint32_t propcnt = 0;
-
-    // First see which properties can be retrieved for this object format
-    ret = ptp_mtp_getobjectpropssupported(params, ob->oi.ObjectFormat, &propcnt, &props);
-    if (ret != PTP_RC_OK) {
-      add_ptp_error_to_errorstack(device, ret, "obj2file(): call to ptp_mtp_getobjectpropssupported() failed.");
-      // Silently fall through.
-    } else {
-      int i;
-      for (i=0;i<propcnt;i++) {
-
-/*
-    TODO: (yavor) See what is a sensible thing to do for Folders
-    if (ob->oi.ObjectFormat == PTP_OFC_Association)
-*/
-      switch (props[i]) {
-        case PTP_OPC_ObjectSize:
-          if (device->object_bitsize == 64) {
-            file->filesize = get_u64_from_object(device, file->item_id, PTP_OPC_ObjectSize, 0);
-          } else {
-            file->filesize = get_u32_from_object(device, file->item_id, PTP_OPC_ObjectSize, 0);
-          }
-          break;
-        default:
-            break;
-        }
-      }
-      free(props);
-    }
-  }
-
-  return file;
-}
-
-
-
-static LIBMTP_file_t * get_files(LIBMTP_mtpdevice_t *device,
-                        PTPParams *params,
-                        uint32_t storageid,
-                        uint32_t parentId
-                        )
-{
-  int i = 0;
-  LIBMTP_file_t *curfile = NULL;
-  LIBMTP_file_t *retfiles = NULL;
-  PTPObjectHandles currentHandles;
-
-  uint16_t ret = ptp_getobjecthandles(params,
-                                      storageid,
-                                      PTP_GOH_ALL_FORMATS,
-                                      parentId,
-                                      &currentHandles);
-
-  if (ret != PTP_RC_OK) {
-    add_ptp_error_to_errorstack(device, ret, "get_files(): could not get object handles.");
-    return NULL;
-  }
-
-  if (currentHandles.Handler == NULL || currentHandles.n == 0)
-    return NULL;
-
-  for (i = 0; i < currentHandles.n; i++) {
-    PTPObject *ob;
-    LIBMTP_file_t *file;
-
-    ret = ptp_object_want(params, currentHandles.Handler[i],PTPOBJECT_OBJECTINFO_LOADED, &ob);
-    if (ret != PTP_RC_OK)
-      return NULL;
-
-    file = obj2file(device, ob);
-
-    if (file == NULL)
-      continue;
-
-    // Add track to a list that will be returned afterwards.
-    if (curfile == NULL) {
-      curfile = file;
-      retfiles = file;
-    } else {
-      curfile->next = file;
-      curfile = file;
-    }
- }
-
-  free(currentHandles.Handler);
-
-  // Return a pointer to the original first file
-  // in the big list.
-  return retfiles;
-}
-
-/**
- * This function controls the usage of the internal object cache.
- * The default configuration loads all object handles on initialization.
- * In order to handle large number of files turn on the on demand
- * loading by calling this function with parameter 1, and use
- * LIBMTP_Get_Files_And_Folders() to load content when needed.
- *
- * @param flag - 0 means turn off on demand loading.
- *             - 1 means turn on on demand loading.
- */
-void LIBMTP_Set_Load_Cache_On_Demand(int flag)
-{
-    load_cache_on_demand = flag;
-}
-
-/**
- * This function retrieves the content of a folder with id - parentId.
- * The result contains both files and folders.
- * NOTE: the request will always perform I/O with the device.
- * @param device a pointer to the MTP device to report info from.
- * @storageId the id for the storage.
- * @param parentId the parent folder id.
- */
-LIBMTP_file_t * LIBMTP_Get_Files_And_Folders(LIBMTP_mtpdevice_t *device, uint32_t storageId, uint32_t parentId)
-{
-  LIBMTP_file_t *retfiles = NULL;
-  PTPParams *params = (PTPParams *) device->params;
-  PTP_USB *ptp_usb = (PTP_USB*) device->usbinfo;
-  int ret;
-  uint32_t i;
-
-#if 0
-  //TODO: (yavor) Try to use get_all_metadata_fast for a parendId.
-  if (ptp_operation_issupported(params,PTP_OC_MTP_GetObjPropList)
-      && !FLAG_BROKEN_MTPGETOBJPROPLIST(ptp_usb)
-      && !FLAG_BROKEN_MTPGETOBJPROPLIST_ALL(ptp_usb)) {
-    // Use the fast method. Ignore return value for now.
-    ret = get_all_metadata_fast(device, PTP_GOH_ALL_STORAGE);
-  }
-#endif
-
-
-  retfiles = get_files(device, params, storageId, parentId);
-
-  return retfiles;
-}
-
 /**
  * This function refresh the internal handle list whenever
  * the items stored inside the device is altered. On operations
@@ -2541,10 +2309,6 @@ static void flush_handles(LIBMTP_mtpdevice_t *device)
   PTP_USB *ptp_usb = (PTP_USB*) device->usbinfo;
   int ret;
   uint32_t i;
-
-  if (load_cache_on_demand) {
-    return;
-  }
 
   if (params->objects != NULL) {
     for (i=0;i<params->nrofobjects;i++)
@@ -2560,7 +2324,6 @@ static void flush_handles(LIBMTP_mtpdevice_t *device)
     // Use the fast method. Ignore return value for now.
     ret = get_all_metadata_fast(device, PTP_GOH_ALL_STORAGE);
   }
-
   // If the previous failed or returned no objects, use classic
   // methods instead.
   if (params->nrofobjects == 0) {
@@ -4716,7 +4479,6 @@ int LIBMTP_Get_File_To_File(LIBMTP_mtpdevice_t *device, uint32_t const id,
 			 void const * const data)
 {
   int fd = -1;
-  struct utimbuf mtime;
   int ret;
 
   // Sanity check
@@ -4739,7 +4501,7 @@ int LIBMTP_Get_File_To_File(LIBMTP_mtpdevice_t *device, uint32_t const id,
     return -1;
   }
 
-  ret = LIBMTP_Get_File_To_File_Descriptor(device, id, fd, callback, data, &mtime);
+  ret = LIBMTP_Get_File_To_File_Descriptor(device, id, fd, callback, data);
 
   // Close file
   close(fd);
@@ -4747,9 +4509,8 @@ int LIBMTP_Get_File_To_File(LIBMTP_mtpdevice_t *device, uint32_t const id,
   // Delete partial file.
   if (ret == -1) {
     unlink(path);
-  } else {
-      utime(path, &mtime);
   }
+
   return ret;
 }
 
@@ -4769,18 +4530,15 @@ int LIBMTP_Get_File_To_File(LIBMTP_mtpdevice_t *device, uint32_t const id,
  *             the <code>progress</code> function in order to
  *             pass along some user defined data to the progress
  *             updates. If not used, set this to NULL.
- * @param mtime out parameter to return the timestamp for file on
- *             the device.
  * @return 0 if the transfer was successful, any other value means
- *             failure.
+ *           failure.
  * @see LIBMTP_Get_File_To_File()
  */
 int LIBMTP_Get_File_To_File_Descriptor(LIBMTP_mtpdevice_t *device,
 					uint32_t const id,
 					int const fd,
 					LIBMTP_progressfunc_t const callback,
-					void const * const data,
-                    struct utimbuf * mtime)
+					void const * const data)
 {
   uint16_t ret;
   PTPParams *params = (PTPParams *) device->params;
@@ -4795,11 +4553,6 @@ int LIBMTP_Get_File_To_File_Descriptor(LIBMTP_mtpdevice_t *device,
   if (ob->oi.ObjectFormat == PTP_OFC_Association) {
     add_error_to_errorstack(device, LIBMTP_ERROR_GENERAL, "LIBMTP_Get_File_To_File_Descriptor(): Bad object format.");
     return -1;
-  }
-
-  if (mtime != NULL) {
-    mtime->actime = ob->oi.CaptureDate;
-    mtime->modtime = ob->oi.ModificationDate;
   }
 
   // Callbacks
@@ -4940,8 +4693,6 @@ int LIBMTP_Get_Track_To_File(LIBMTP_mtpdevice_t *device, uint32_t const id,
  *             the <code>progress</code> function in order to
  *             pass along some user defined data to the progress
  *             updates. If not used, set this to NULL.
- * @param mtime out parameter to return the timestamp for file on
- *             the device.
  * @return 0 if the transfer was successful, any other value means
  *           failure.
  * @see LIBMTP_Get_Track_To_File()
@@ -4950,11 +4701,10 @@ int LIBMTP_Get_Track_To_File_Descriptor(LIBMTP_mtpdevice_t *device,
 					uint32_t const id,
 					int const fd,
 					LIBMTP_progressfunc_t const callback,
-					void const * const data,
-                    struct utimbuf * mtime)
+					void const * const data)
 {
   // This is just a wrapper
-  return LIBMTP_Get_File_To_File_Descriptor(device, id, fd, callback, data, mtime);
+  return LIBMTP_Get_File_To_File_Descriptor(device, id, fd, callback, data);
 }
 
 /**
@@ -5554,18 +5304,19 @@ static int send_file_object_info(LIBMTP_mtpdevice_t *device, LIBMTP_file_t *file
   PTPParams *params = (PTPParams *) device->params;
   PTP_USB *ptp_usb = (PTP_USB*) device->usbinfo;
   uint32_t store;
-
-#ifdef _AFT_BUILD
-  int use_primary_storage = 0;
-#else
   int use_primary_storage = 1;
-#endif
-
   uint16_t of = map_libmtp_type_to_ptp_type(filedata->filetype);
   LIBMTP_devicestorage_t *storage;
   uint32_t localph = filedata->parent_id;
   uint16_t ret;
   int i;
+
+  // Sanity check: no zerolength files.
+  if (filedata->filesize == 0) {
+    add_error_to_errorstack(device, LIBMTP_ERROR_GENERAL, "send_file_object_info(): "
+			    "File of zero size.");
+    return -1;
+  }
 
   if (filedata->storage_id != 0) {
     store = filedata->storage_id;
@@ -5616,11 +5367,6 @@ static int send_file_object_info(LIBMTP_mtpdevice_t *device, LIBMTP_file_t *file
     } else if (of == PTP_OFC_Text) {
       localph = device->default_text_folder;
     }
-  }
-
-  // default parent handle
-  if (localph == 0) {
-    localph = 0xFFFFFFFFU; // Set to -1
   }
 
   // Here we wire the type to unknown on bugged, but
@@ -5698,6 +5444,10 @@ static int send_file_object_info(LIBMTP_mtpdevice_t *device, LIBMTP_file_t *file
     MTPProperties *prop = NULL;
     uint16_t *properties = NULL;
     uint32_t propcnt = 0;
+
+    // default parent handle
+    if (localph == 0)
+      localph = 0xFFFFFFFFU; // Set to -1
 
     // Must be 0x00000000U for new objects
     filedata->item_id = 0x00000000U;
@@ -5787,18 +5537,14 @@ static int send_file_object_info(LIBMTP_mtpdevice_t *device, LIBMTP_file_t *file
     if (FLAG_ONLY_7BIT_FILENAMES(ptp_usb)) {
       strip_7bit_from_utf8(new_file.Filename);
     }
-    if (filedata->filesize > 0xFFFFFFFFL) {
-      // This is a kludge in the MTP standard for large files.
-      new_file.ObjectCompressedSize = (uint32_t) 0xFFFFFFFF;
-    } else {
-      new_file.ObjectCompressedSize = (uint32_t) filedata->filesize;
-    }
+    // We lose precision here.
+    new_file.ObjectCompressedSize = (uint32_t) filedata->filesize;
     new_file.ObjectFormat = of;
     new_file.StorageID = store;
     new_file.ParentObject = localph;
     new_file.ModificationDate = time(NULL);
-    // Create the object
 
+    // Create the object
     ret = ptp_sendobjectinfo(params, &store, &localph, &filedata->item_id, &new_file);
 
     if (ret != PTP_RC_OK) {
@@ -6782,11 +6528,6 @@ uint32_t LIBMTP_Create_Folder(LIBMTP_mtpdevice_t *device, char *name,
   } else {
     store = storage_id;
   }
-
-  if (parent_id == 0) {
-    parent_id = 0xFFFFFFFFU; // Set to -1
-  }
-
   parenthandle = parent_id;
 
   memset(&new_folder, 0, sizeof(new_folder));
