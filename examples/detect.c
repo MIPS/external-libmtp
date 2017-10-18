@@ -218,8 +218,7 @@ int main (int argc, char **argv)
 							      file->item_id,
 							      tmpfiledescriptor,
 							      NULL,
-							      NULL,
-                                  NULL);
+							      NULL);
 		if (ret == 0) {
 		  uint8_t *buf = NULL;
 		  uint32_t readbytes;

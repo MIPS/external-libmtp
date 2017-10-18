@@ -49,13 +49,6 @@
 #define USB_CLASS_PTP 6
 #endif
 
-/* libusb dosn't have misc class defined */
-#ifndef USB_CLASS_MISC
-#define USB_CLASS_MISC 0xEF
-#endif
-
-#define APPLE_VID 0x05ac
-
 /* To enable debug prints for USB stuff, switch on this */
 //#define ENABLE_USB_BULK_DEBUG
 
@@ -206,94 +199,6 @@ static void free_mtpdevice_list(mtpdevice_list_t *devlist)
   return;
 }
 
-/* Comment out this define to enable the original, more aggressive probing. */
-#define MILD_MTP_PROBING
-
-#ifdef MILD_MTP_PROBING
-/**
- * This checks if a device has an interface with MTP description.
- *
- * @param dev a device struct from libusb.
- * @param dumpfile set to non-NULL to make the descriptors dump out
- *        to this file in human-readable hex so we can scruitinze them.
- * @return 1 if the device is MTP compliant, 0 if not.
- */
-static int probe_device_descriptor(struct usb_device *dev, FILE *dumpfile)
-{
-  usb_dev_handle *devh;
-  unsigned char buf[1024];
-  int i;
-  int ret;
-
-  /*
-   * Don't examine devices that are not likely to
-   * contain any MTP interface, update this the day
-   * you find some weird combination...
-   */
-  if (!(dev->descriptor.bDeviceClass == USB_CLASS_PER_INTERFACE ||
-	    dev->descriptor.bDeviceClass == USB_CLASS_PTP ||
-	    dev->descriptor.bDeviceClass == USB_CLASS_VENDOR_SPEC) ||
-      /* Apple devices sometimes freeze when probed by libusb */
-      dev->descriptor.idVendor == APPLE_VID) {
-    return 0;
-  }
-
-  /* Attempt to open Device on this port */
-  devh = usb_open(dev);
-  if (devh == NULL) {
-    /* Could not open this device */
-    return 0;
-  }
-
-  /*
-   * This sometimes crashes on the j for loop below
-   * I think it is because config is NULL yet
-   * dev->descriptor.bNumConfigurations > 0
-   * this check should stop this
-   */
-  if (dev->config) {
-    /*
-     * Loop over the interfaces, and check for string "MTP"
-     * in the descriptions.
-     */
-
-    for (i = 0; i < dev->descriptor.bNumConfigurations; i++) {
-      uint8_t j;
-
-      for (j = 0; j < dev->config[i].bNumInterfaces; j++) {
-        int k;
-        for (k = 0; k < dev->config[i].interface[j].num_altsetting; k++) {
-	  /* Current interface descriptor */
-	  struct usb_interface_descriptor *intf =
-	    &dev->config[i].interface[j].altsetting[k];
-
-          buf[0] = '\0';
-          ret = usb_get_string_simple(devh,
-				      dev->config[i].interface[j].altsetting[k].iInterface,
-				      (char *) buf,
-				      1024);
-
-	  if (ret < 3)
-	    continue;
-          if (strcmp((char *) buf, "MTP") == 0) {
-	    if (dumpfile != NULL) {
-              fprintf(dumpfile, "Configuration %d, interface %d, altsetting %d:\n", i, j, k);
-	      fprintf(dumpfile, "   Interface description contains the string \"MTP\"\n");
-	      fprintf(dumpfile, "   Device recognized as MTP, no further probing.\n");
-	    }
-            usb_close(devh);
-            return 1;
-          }
-       }
-      }
-    }
-  }
-
-  usb_close(devh);
-  return 0;
-}
-
-#else /* MILD_MTP_PROBING */
 /**
  * This checks if a device has an MTP descriptor. The descriptor was
  * elaborated about in gPhoto bug 1482084, and some official documentation
@@ -347,7 +252,21 @@ static int probe_device_descriptor(struct usb_device *dev, FILE *dumpfile)
 	  struct usb_interface_descriptor *intf =
 	    &dev->config[i].interface[j].altsetting[k];
 
-
+	  /*
+	   * Check for Still Image Capture class with PIMA 15740 protocol,
+	   * also known as PTP
+	   */
+	  if (intf->bInterfaceClass == USB_CLASS_PTP
+	      && intf->bInterfaceSubClass == 0x01
+	      && intf->bInterfaceProtocol == 0x01) {
+	    if (dumpfile != NULL) {
+              fprintf(dumpfile, "Configuration %d, interface %d, altsetting %d:\n", i, j, k);
+	      fprintf(dumpfile, "   Interface implements PTP class,"
+		      " no further probing.\n");
+	    }
+            usb_close(devh);
+            return 1;
+	  }
           buf[0] = '\0';
           ret = usb_get_string_simple(devh,
 				      dev->config[i].interface[j].altsetting[k].iInterface,
@@ -494,7 +413,6 @@ static int probe_device_descriptor(struct usb_device *dev, FILE *dumpfile)
   usb_close(devh);
   return 1;
 }
-#endif /* MILD_MTP_PROBING */
 
 /**
  * This function scans through the connected usb devices on a machine and
@@ -639,14 +557,6 @@ LIBMTP_error_number_t LIBMTP_Detect_Raw_Devices(LIBMTP_raw_device_t ** devices,
 	retdevs[i].device_entry.vendor = mtp_device_table[j].vendor;
 	retdevs[i].device_entry.product = mtp_device_table[j].product;
 	retdevs[i].device_entry.device_flags = mtp_device_table[j].device_flags;
-
-#ifdef _AFT_BUILD
-    // Disable the following features for all devices.
-	retdevs[i].device_entry.device_flags |= DEVICE_FLAG_BROKEN_MTPGETOBJPROPLIST|
-                                            DEVICE_FLAG_BROKEN_SET_OBJECT_PROPLIST|
-                                            DEVICE_FLAG_BROKEN_SEND_OBJECT_PROPLIST;
-#endif
-
 #ifdef ENABLE_USB_BULK_DEBUG
 	// This device is known to the developers
 	fprintf(stderr, "Device %d (VID=%04x and PID=%04x) is a %s %s.\n", 
@@ -805,7 +715,6 @@ libusb_glue_error (PTPParams *params, const char *format, ...)
 #define CONTEXT_BLOCK_SIZE_1	0x3e00
 #define CONTEXT_BLOCK_SIZE_2  0x200
 #define CONTEXT_BLOCK_SIZE    CONTEXT_BLOCK_SIZE_1+CONTEXT_BLOCK_SIZE_2
-
 static short
 ptp_read_func (
 	unsigned long size, PTPDataHandler *handler,void *data,
@@ -819,23 +728,6 @@ ptp_read_func (
   unsigned long written;
   unsigned char *bytes;
   int expect_terminator_byte = 0;
-  unsigned long usb_inep_maxpacket_size;
-  unsigned long context_block_size_1;
-  unsigned long context_block_size_2;
-  uint16_t ptp_dev_vendor_id = ptp_usb->rawdevice.device_entry.vendor_id;
-
-  //"iRiver" device special handling
-  if (ptp_dev_vendor_id == 0x4102 || ptp_dev_vendor_id == 0x1006) {
-	  usb_inep_maxpacket_size = ptp_usb->inep_maxpacket;
-	  if (usb_inep_maxpacket_size == 0x400) {
-		  context_block_size_1 = CONTEXT_BLOCK_SIZE_1 - 0x200;
-		  context_block_size_2 = CONTEXT_BLOCK_SIZE_2 + 0x200;
-	  }
-	  else {
-		  context_block_size_1 = CONTEXT_BLOCK_SIZE_1;
-		  context_block_size_2 = CONTEXT_BLOCK_SIZE_2;
-	  }
-  }
 
   // This is the largest block we'll need to read in.
   bytes = malloc(CONTEXT_BLOCK_SIZE);
@@ -881,9 +773,7 @@ ptp_read_func (
     printf("<==USB IN\n");
     if (result == 0)
       printf("Zero Read\n");
-    else if (result < 0) 
-      fprintf(stderr, "USB_BULK_READ result=%#x\n", result);
-    else 
+    else
       data_dump_ascii (stdout,bytes,result,16);
 #endif
     
@@ -982,11 +872,7 @@ ptp_write_func (
 	    result = USB_BULK_WRITE(ptp_usb->handle,ptp_usb->outep,((char*)bytes+usbwritten),towrite-usbwritten,ptp_usb->timeout);
 #ifdef ENABLE_USB_BULK_DEBUG
 	    printf("USB OUT==>\n");
-        if (result > 0) { 
-            data_dump_ascii (stdout,bytes+usbwritten,result,16);
-        } else {
-            fprintf(stderr, "USB_BULK_WRITE: result=%#x\n", result);
-        }
+	    data_dump_ascii (stdout,bytes+usbwritten,result,16);
 #endif
 	    if (result < 0) {
 	      return PTP_ERROR_IO;
@@ -1253,10 +1139,6 @@ static uint16_t ptp_usb_getpacket(PTPParams *params,
 	PTPDataHandler	memhandler;
 	uint16_t	ret;
 	unsigned char	*x = NULL;
-	unsigned long packet_size;
-	PTP_USB *ptp_usb = (PTP_USB *) params->data;
-
-	packet_size = ptp_usb->inep_maxpacket;
 
 	/* read the header and potentially the first data */
 	if (params->response_packet_size > 0) {
@@ -1270,7 +1152,7 @@ static uint16_t ptp_usb_getpacket(PTPParams *params,
 		return PTP_RC_OK;
 	}
 	ptp_init_recv_memory_handler (&memhandler);
-	ret = ptp_read_func(packet_size, &memhandler, params->data, rlen, 0);
+	ret = ptp_read_func(PTP_USB_BULK_HS_MAX_PACKET_LEN_READ, &memhandler, params->data, rlen, 0);
 	ptp_exit_recv_memory_handler (&memhandler, &x, rlen);
 	if (x) {
 		memcpy (packet, x, *rlen);
@@ -1617,38 +1499,37 @@ static int init_ptp_usb (PTPParams* params, PTP_USB* ptp_usb, struct usb_device*
   
   ptp_usb->timeout = USB_TIMEOUT_DEFAULT;
   
-  device_handle = usb_open(dev);
-  if (!device_handle) {
-    perror("usb_open()");
-    return -1;
-  }
-
-  ptp_usb->handle = device_handle;
-#ifdef LIBUSB_HAS_DETACH_KERNEL_DRIVER_NP
-  /*
-  * If this device is known to be wrongfully claimed by other kernel
-  * drivers (such as mass storage), then try to unload it to make it
-  * accessible from user space.
-  */
-  if (FLAG_UNLOAD_DRIVER(ptp_usb)) {
-    if (usb_detach_kernel_driver_np(device_handle, (int) ptp_usb->interface)) {
-	  // Totally ignore this error!
-	  // perror("usb_detach_kernel_driver_np()");
+  if ((device_handle = usb_open(dev))){
+    if (!device_handle) {
+      perror("usb_open()");
+      return -1;
     }
-  }
+    ptp_usb->handle = device_handle;
+#ifdef LIBUSB_HAS_DETACH_KERNEL_DRIVER_NP
+    /*
+     * If this device is known to be wrongfully claimed by other kernel
+     * drivers (such as mass storage), then try to unload it to make it
+     * accessible from user space.
+     */
+    if (FLAG_UNLOAD_DRIVER(ptp_usb)) {
+      if (usb_detach_kernel_driver_np(device_handle, (int) ptp_usb->interface)) {
+	// Totally ignore this error!
+	// perror("usb_detach_kernel_driver_np()");
+      }
+    }
 #endif
 #ifdef __WIN32__
-  // Only needed on Windows, and cause problems on other platforms.
-  if (usb_set_configuration(device_handle, dev->config->bConfigurationValue)) {
-    perror("usb_set_configuration()");
-    return -1;
-  }
+    // Only needed on Windows, and cause problems on other platforms.
+    if (usb_set_configuration(device_handle, dev->config->bConfigurationValue)) {
+      perror("usb_set_configuration()");
+      return -1;
+    }
 #endif
-  if (usb_claim_interface(device_handle, (int) ptp_usb->interface)) {
-    perror("usb_claim_interface()");
-    return -1;
+    if (usb_claim_interface(device_handle, (int) ptp_usb->interface)) {
+      perror("usb_claim_interface()");
+      return -1;
+    }
   }
-
   return 0;
 }
 
@@ -1709,7 +1590,6 @@ static void close_usb(PTP_USB* ptp_usb)
   // Commented out since it was confusing some
   // devices to do these things.
   if (!FLAG_NO_RELEASE_INTERFACE(ptp_usb)) {
-
     /*
      * Clear any stalled endpoints
      * On misbehaving devices designed for Windows/Mac, quote from:
@@ -1729,7 +1609,9 @@ static void close_usb(PTP_USB* ptp_usb)
     usb_resetep(ptp_usb->handle, ptp_usb->outep);
     usb_release_interface(ptp_usb->handle, (int) ptp_usb->interface);
   }
-
+  // Brutally reset device
+  // TODO: is this good on the Mac too?
+  usb_reset(ptp_usb->handle);
   usb_close(ptp_usb->handle);
 }
 
@@ -1854,7 +1736,6 @@ LIBMTP_error_number_t configure_usb_device(LIBMTP_raw_device_t *device,
     (void) probe_device_descriptor(libusb_device, NULL);
   }
   
-
   /* Assign endpoints to usbinfo... */
   find_interface_and_endpoints(libusb_device,
 		   &ptp_usb->interface,
